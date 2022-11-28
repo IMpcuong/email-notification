@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Cloudformation template to create a transaction summarization notification alarm.
+
+Parameters:
+  OrganizationNameAbbreviation:
+    Type: String
+  ProjectName:
+    Type: String
+  Environment:
+    Type: String
+    AllowedValues:
+      - Dev
+      - UAT
+      - Prod
+  DbEndpoint:
+    Type: String
+  DbUsername:
+    Type: String
+  DbPassword:
+    Type: String
+    NoEcho: true
+  DbSecretArn:
+    Type: String
+    NoEcho: true
+  VpcId:
+    Type: String
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    MemorySize: 512
+    Timeout: 30
+    # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+    # Environment:
+    #   Variables:
+    #     TZ: "Asia/Ho_Chi_Minh"
+    #     DB_ENDPOINT: !Ref DbEndpoint
+    #     DB_USERNAME: !Ref DbUsername
+    #     DB_PASSWORD: !Ref DbPassword
+    #     DB_PROPERTIES: "characterEncoding=utf-8,connectionTimeZone=LOCAL,forceConnectionTimeZoneToSession=true"
+
+Resources:
+  EmailAlarmTxnSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Used by the EmailAlarmTxnFunction lambda function.
+      GroupName: !Sub "${ProjectName}-EmailAlarmTxnFunction-${Environment}-SG"
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: !Sub "project-name"
+          Value: !Ref ProjectName
+        - Key: !Sub "env"
+          Value: !Ref Environment
+        - Key: organization
+          Value: !Ref OrganizationNameAbbreviation
+        - Key: Name
+          Value: !Sub "${ProjectName}-EmailAlarmTxnFunction-${Environment}-SG"
+
+  EmailAlarmTxnFunction:
+    # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-EmailAlarmTxnFunction-${Environment}-Function"
+      AutoPublishAlias: live
+      CodeUri: ./
+      Handler: main.go
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Resource: "*"
+              Action: # https://aws.amazon.com/vi/premiumsupport/knowledge-center/lambda-send-email-ses/
+                - "ses:SendEmail"
+                - "ses:SendRawEmail"
+                - "ses:ListIdentities"
+                - "ses:List*"
+                - "ses:Get*"
+      Runtime: go1.x
+      DeploymentPreference:
+        Type: AllAtOnce
+      Architectures:
+        - x86_64
+      Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
+      Tags:
+        project-name: !Ref ProjectName
+        env: !Ref Environment
+        organization: !Ref OrganizationNameAbbreviation
+        Name: !Sub "${ProjectName}-EmailAlarmTxnFunction-${Environment}-Function"
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt EmailAlarmTxnSecurityGroup.GroupId
+        SubnetIds: !Ref SubnetIds
+      # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+      Environment:
+        Variables:
+          Param_Test: Value1
+          TZ: "Asia/Ho_Chi_Minh"
+          DB_ENDPOINT: !Ref DbEndpoint
+          DB_USERNAME: !Ref DbUsername
+          DB_PASSWORD: !Ref DbPassword
+          DB_SECRET_ARN: !Ref DbSecretArn
+          DB_PROPERTIES: "characterEncoding=utf-8,connectionTimeZone=LOCAL,forceConnectionTimeZoneToSession=true"
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: arn:aws:logs:*:*:*

@@ -1,0 +1,1 @@
+sam build -t .\template.yaml && sam deploy --config-file .\samconfig.toml --config-env default --debug

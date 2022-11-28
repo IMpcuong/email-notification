@@ -1,0 +1,19 @@
+version = 0.1
+
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "TxnAlarm-Stack"
+s3_bucket = "aws-sam-cli-bucket"
+s3_prefix = "TxnAlarm-Stack-Prefix"
+region = "ap-southeast-1"
+profile = "default"
+confirm_changeset = false
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
+parameter_overrides = """ \
+  OrganizationNameAbbreviation=\"Your-Org\" ProjectName=\"Test\" Environment=\"Dev\" \
+  DbEndpoint=\"tcp(db-instance.db-id.ap-southeast-1.rds.amazonaws.com:3307)/schema\" DbUsername=\"user\" DbPassword=\"password\" \
+  DbSecretArn=\"/secret/arn\" \
+  SubnetIds=\"subnet-123456789\" \
+  VpcId=\"vpc-123456789\" \
+"""
