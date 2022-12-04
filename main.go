@@ -282,7 +282,6 @@ func handleReq(ctx context.Context, trigger Trigger) (TxnStat, error) {
 
 		pingDBAlive(db)
 		txnStat := execQuery(sqlStmt, db)
-
 		strTxnStat := txnStat.Stringify()
 
 		sesSvc := createSESSess()
