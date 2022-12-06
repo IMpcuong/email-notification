@@ -27,9 +27,9 @@ var rdsProp = map[string]string{
 }
 
 type TxnStat struct {
-	Auth   uint16
-	Reject uint16
-	New    uint16
+	Auth   sql.NullInt16 // Nullable `int16` datatype.
+	Reject sql.NullInt16
+	New    sql.NullInt16
 }
 
 func (ts TxnStat) Stringify() string {
