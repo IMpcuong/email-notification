@@ -26,44 +26,71 @@ var rdsProp = map[string]string{
 	"DB_SECRET_ARN": "/secret/arn",
 }
 
+type ContractTxnStat interface {
+	TxnStat | ContractStat
+}
+
 type TxnStat struct {
 	Auth   sql.NullInt16 // Nullable `int16` datatype.
 	Reject sql.NullInt16
 	New    sql.NullInt16
 }
 
-func (ts TxnStat) Stringify() string {
-	tsFields := reflect.TypeOf(ts)
-	totalFields := tsFields.NumField()
-	tsValues := reflect.ValueOf(ts)
+type ContractStat struct {
+	Success sql.NullInt16 // Nullable `int16` datatype.
+	Fail    sql.NullInt16
+}
+
+func stringify[Type ContractTxnStat](cts Type) string {
+	ctsType := reflect.TypeOf(cts)
+	totalFields := ctsType.NumField()
+	ctsValues := reflect.ValueOf(cts)
 
 	txnStrArr := make([]string, 0, totalFields)
 	for idx := 0; idx < totalFields; idx++ {
-		field := tsFields.Field(idx)
-		value := tsValues.Field(idx)
-		txnStrArr = append(txnStrArr, fmt.Sprintf("Transaction-Type %v: %v", field.Name, value))
+		field := ctsType.Field(idx)
+		value := ctsValues.Field(idx)
+		if strings.Contains(ctsType.String(), "Txn") {
+			txnStrArr = append(txnStrArr, fmt.Sprintf("Transaction-Type %v: %v", field.Name, value))
+		} else {
+			txnStrArr = append(txnStrArr, fmt.Sprintf("Contract-Status %v: %v", field.Name, value))
+		}
+
 	}
 
 	return strings.Join(txnStrArr, "<br/>")
 }
 
 const (
-	SQL_FILE = "txn_summarize.sql"
-	SQL_STMT = `
+	TXN_SQL_FILE      = "txn_summarize.sql"
+	CONTRACT_SQL_FILE = "contract_summarize.sql"
+	TXN_SQL_STMT      = `
 select
-	sum(if(txn_stat = 'AUTHEN', quantity, NULL)) as AUTHEN,
-	sum(if(txn_stat = 'REJECT', quantity, NULL)) as REJECT,
-	sum(if(txn_stat = 'NEW', quantity, NULL)) as NEW,
+	sum(if(txn_status = 'AUTHEN', quantity, NULL)) as AUTHEN,
+	sum(if(txn_status = 'REJECT', quantity, NULL)) as REJECT,
+	sum(if(txn_status = 'NEW', quantity, NULL)) as NEW,
 from (
 	select count(*) as quantity, t.txn_status
 	from txn_table t
-	where
-  	1 = 1
-  	and t.last_modified >= timestamp(curdate()-1)
+	where t.last_modified >= timestamp(curdate()-1)
   	and t.last_modified < timestamp(curdate())
 	group by
   	t.txn_status
-) as T;
+) as Txn_Report;
+`
+	CONTRACT_SQL_STMT = `
+select
+	sum(if(contract_status = 'LINKED', quantity, null)) as Success,
+	sum(if(contract_status <> 'LINKED', quantity, null)) as Fail
+from (
+	select count(*) as quantity, t.contract_status
+	from pl_contract t
+	-- cast(t.last_modified as date)
+	where timestampadd(hour, 7, t.last_modified) >= timestamp(curdate()-1)
+		and timestampadd(hour, 7, t.last_modified) <= timestampadd(day, 0, curdate())
+	group by
+		t.contract_stat
+) as Contract_Report;
 `
 )
 
@@ -89,20 +116,28 @@ func connectDB(acc, passwd, endpoint string) *sql.DB {
 	return db
 }
 
-func execQuery(query string, db *sql.DB) *TxnStat {
-	rows, err := db.Query(query)
+func execQuery(query []string, db *sql.DB) (*TxnStat, *ContractStat) {
+	txnRows, err := db.Query(query[0])
 	handleErr(err)
 
 	sumTxnStat := new(TxnStat)
-	for rows.Next() {
-		err = rows.Scan(&sumTxnStat.Auth, &sumTxnStat.Reject, &sumTxnStat.New)
+	for txnRows.Next() {
+		err = txnRows.Scan(&sumTxnStat.Auth, &sumTxnStat.Reject, &sumTxnStat.New)
 		handleErr(err)
 		fmt.Println(sumTxnStat)
-
-		return sumTxnStat
 	}
 
-	return sumTxnStat
+	contractRows, err := db.Query(query[1])
+	handleErr(err)
+
+	sumContractStat := new(ContractStat)
+	for contractRows.Next() {
+		err = contractRows.Scan(&sumContractStat.Success, &sumContractStat.Fail)
+		handleErr(err)
+		fmt.Println(sumContractStat)
+	}
+
+	return sumTxnStat, sumContractStat
 }
 
 func invokeEnvVar(key string) string {
@@ -268,9 +303,15 @@ func handleReq(ctx context.Context, trigger Trigger) (TxnStat, error) {
 	case <-time.After(10 * time.Second):
 		log.Fatalln("Error: Deadline violation!")
 	case <-ctxWithDeadline.Done():
-		sqlStmt := getQueryFromFile(SQL_FILE)
-		if sqlStmt == "" {
-			sqlStmt = SQL_STMT
+		_ = getQueryFromFile(TXN_SQL_FILE)      // NOTE: Allow dead code.
+		_ = getQueryFromFile(CONTRACT_SQL_FILE) // NOTE: Allow dead code.
+
+		var txnSqlStmt, contractSqlStmt string
+		listSqlStmt := make([]string, 0, 2)
+		if len(listSqlStmt) == 0 {
+			txnSqlStmt = TXN_SQL_STMT
+			contractSqlStmt = CONTRACT_SQL_STMT
+			listSqlStmt = []string{txnSqlStmt, contractSqlStmt}
 		}
 
 		rdsAcc := invokeEnvVar("DB_USERNAME")
@@ -281,11 +322,13 @@ func handleReq(ctx context.Context, trigger Trigger) (TxnStat, error) {
 		defer db.Close()
 
 		pingDBAlive(db)
-		txnStat := execQuery(sqlStmt, db)
-		strTxnStat := txnStat.Stringify()
+		txnStat, contractStat := execQuery(listSqlStmt, db)
+		strTxnStat := stringify(*txnStat)
+		strContractStat := stringify(*contractStat)
+		emailContent := fmt.Sprintf("%s%s%s\n", strTxnStat, "<br/>", strContractStat)
 
 		sesSvc := createSESSess()
-		sesEmailTpl := genSESEmailTpl(strTxnStat, sesSvc)
+		sesEmailTpl := genSESEmailTpl(emailContent, sesSvc)
 		emailRes, err := sesSvc.SendEmail(sesEmailTpl)
 		handleSESErr(err)
 		fmt.Println("Email sent to address: \n" + strings.Join(DefaultRecipients, "\n"))
