@@ -73,9 +73,8 @@ from (
 	select count(*) as quantity, t.txn_status
 	from txn_table t
 	where t.last_modified >= timestamp(curdate()-1)
-  	and t.last_modified < timestamp(curdate())
-	group by
-  	t.txn_status
+  		and t.last_modified < timestamp(curdate())
+	group by t.txn_status
 ) as Txn_Report;
 `
 	CONTRACT_SQL_STMT = `
@@ -88,8 +87,7 @@ from (
 	-- cast(t.last_modified as date)
 	where timestampadd(hour, 7, t.last_modified) >= timestamp(curdate()-1)
 		and timestampadd(hour, 7, t.last_modified) <= timestampadd(day, 0, curdate())
-	group by
-		t.contract_stat
+	group by t.contract_stat
 ) as Contract_Report;
 `
 )
